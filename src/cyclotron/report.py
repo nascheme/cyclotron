@@ -10,7 +10,7 @@ def to_float(s, default=0.0):
         return default
     try:
         return float(str(s).split()[0])
-    except ValueError, IndexError:
+    except (ValueError, IndexError):
         return default
 
 
@@ -38,18 +38,24 @@ def extract(run):
     max_pause_ms = max(to_float(summary.get('GC pause max ms')), max_pause_ms)
 
     return {
+        'workload': p.get('workload', 'chain'),
         'cycle_size': p['cycle_size'],
         'extra_bytes': p['extra_bytes'],
         'live_objects': p['live_objects'],
+        'cyclic_fraction': p.get('cyclic_fraction', 1.0),
         'python': p['python'],
         'wall': run.get('wall_time', 0.0),
-        'total_time': to_float(summary.get('Total time'), run.get('wall_time', 0.0)),
+        'total_time': (
+            0.0
+            if str(summary.get('Total time', '')).strip().startswith('n/a')
+            else to_float(summary.get('Total time'), run.get('wall_time', 0.0))
+        ),
         'peak_rss_kb': max(to_int(summary.get('Peak RSS')), peak_rss),
         'max_trash': max(to_int(summary.get('Max trash')), max_trash_seen),
         'avg_alive': int(avg_alive),
         'avg_trash': int(avg_trash),
         'max_pause_ms': max_pause_ms,
-        'peaked': run.get('peaked'),
+        'stable': run.get('stable'),
         'rc': run.get('returncode', 0),
         'error': run.get('error'),
     }
@@ -88,9 +94,11 @@ def _sort_rows(rows, sort_arg):
 
 def render_flat(rows):
     headers = [
+        ('wl', 5, lambda r: r['workload']),
         ('cycle', 8, lambda r: fmt_count(r['cycle_size'])),
         ('extra', 8, lambda r: fmt_count(r['extra_bytes'])),
         ('live', 8, lambda r: fmt_count(r['live_objects'])),
+        ('cyc%', 6, lambda r: f"{r['cyclic_fraction'] * 100:.0f}"),
         ('time(s)', 9, lambda r: f"{r['total_time']:.2f}"),
         ('peakRSS', 9, lambda r: fmt_bytes(r['peak_rss_kb'])),
         ('maxTrash', 10, lambda r: fmt_count(r['max_trash'])),
@@ -102,9 +110,9 @@ def render_flat(rows):
         ('avgAlive', 10, lambda r: fmt_count(r['avg_alive'])),
         ('avgTrash', 10, lambda r: fmt_count(r['avg_trash'])),
         (
-            'peaked',
+            'stable',
             7,
-            lambda r: {True: 'yes', False: 'no', None: '?'}[r['peaked']],
+            lambda r: {True: 'yes', False: 'no', None: '?'}[r['stable']],
         ),
         ('rc', 4, lambda r: str(r['rc']) if not r['error'] else r['error']),
     ]
@@ -116,53 +124,66 @@ def render_flat(rows):
 
 
 def render_compare(rows1, rows2, label1, label2):
-    by_key1 = {(r['cycle_size'], r['extra_bytes'], r['live_objects']): r for r in rows1}
-    by_key2 = {(r['cycle_size'], r['extra_bytes'], r['live_objects']): r for r in rows2}
+    def key(r):
+        return (
+            r['workload'],
+            r['cycle_size'],
+            r['extra_bytes'],
+            r['live_objects'],
+            r['cyclic_fraction'],
+        )
+
+    by_key1 = {key(r): r for r in rows1}
+    by_key2 = {key(r): r for r in rows2}
     keys = sorted(set(by_key1) & set(by_key2))
 
     headers = [
+        ('wl', 5),
         ('cycle', 8),
         ('extra', 8),
         ('live', 8),
+        ('cyc%', 6),
         ('t(s)', 8),
-        ('t%', 7),
+        ('r-t', 6),
         ('rss', 8),
-        ('rss%', 7),
+        ('r-rss', 6),
         ('trash', 9),
-        ('trash%', 9),
+        ('r-trash', 8),
         ('pause', 8),
-        ('pause%', 8),
-        ('peaked', 7),
+        ('r-pause', 8),
+        ('stable', 7),
     ]
     line = ' '.join(f'{h:>{w}}' for h, w in headers)
     print()
     print(f'base={label1}  vs  new={label2}')
     print(line)
     print('-' * len(line))
-    for key in keys:
-        r1, r2 = by_key1[key], by_key2[key]
-        cs, eb, lo = key
+
+    def ratio(new, base):
+        return f'{new / base:.1f}' if base else '-'
+
+    for k in keys:
+        r1, r2 = by_key1[k], by_key2[k]
+        wl, cs, eb, lo, cf = k
         t1, t2 = r1['total_time'], r2['total_time']
         rss1, rss2 = r1['peak_rss_kb'], r2['peak_rss_kb']
         tr1, tr2 = r1['max_trash'], r2['max_trash']
         p1, p2 = r1['max_pause_ms'], r2['max_pause_ms']
-        dt = (t2 - t1) / t1 * 100 if t1 else 0.0
-        drss = (rss2 - rss1) / rss1 * 100 if rss1 else 0.0
-        dtr = (tr2 - tr1) / tr1 * 100 if tr1 else 0.0
-        dp = (p2 - p1) / p1 * 100 if p1 else 0.0
         cells = [
+            wl,
             fmt_count(cs),
             fmt_count(eb),
             fmt_count(lo),
+            f'{cf * 100:.0f}',
             f'{t2:.2f}',
-            f'{dt:+.1f}',
+            ratio(t2, t1),
             fmt_bytes_int(rss2),
-            f'{drss:+.0f}',
+            ratio(rss2, rss1),
             fmt_count_int(tr2),
-            f'{dtr:+.0f}',
+            ratio(tr2, tr1),
             f'{p2:.2f}' if p2 else '-',
-            f'{dp:+.0f}' if p1 and p2 else '-',
-            {True: 'yes', False: 'no', None: '?'}[r2['peaked']],
+            ratio(p2, p1) if p1 and p2 else '-',
+            {True: 'yes', False: 'no', None: '?'}[r2['stable']],
         ]
         print(' '.join(f'{c:>{w}}' for c, (_, w) in zip(cells, headers)))
 
@@ -213,28 +234,32 @@ def compare(args):
 def _render_flat_legend():
     print()
     print('Legend:')
-    print('  cycle      objects per reference cycle (--cycle-size)')
-    print('  extra      extra bytes payload per cycle (--extra-bytes)')
-    print('  live       live-object target before holder is cleared (--live-objects)')
+    print('  wl         workload mode (chain or tree)')
+    print('  cycle      chain length (chain) or records per tree (tree)')
+    print('  extra      bytes payload per cycle (chain) or max bytes per record (tree)')
+    print('  live       live-object/record target before holder is cleared')
+    print('  cyc%       fraction of allocation units made cyclic')
     print('  time(s)    total wall time reported by the benchmark')
     print('  peakRSS    peak resident set size observed during the run')
     print('  maxTrash   max uncollected cyclic-garbage objects seen at once')
     print('  maxPause   max GC pause duration in ms observed during the run')
     print('  avgAlive   mean live object count across sample points')
     print('  avgTrash   mean uncollected garbage count across sample points')
-    print('  peaked     yes if trash peaked during run; no = still rising')
+    print('  stable     yes if trash series was stable (non-rising) in tail window')
     print('  rc         process return code (or error string on failure)')
 
 
 def _render_compare_legend():
     print()
-    print('Legend (base vs new, matched by cycle/extra/live):')
+    print('Legend (base vs new, matched by wl/cycle/extra/live/cyc%):')
+    print('  wl         workload mode (chain or tree)')
+    print('  cyc%       fraction of allocation units made cyclic')
     print('  t(s)       total time for new build')
-    print('  t%         percent change in time vs base, (new-base)/base*100')
+    print('  r-t        ratio of new/base total time (1.0 = equal, 2.0 = 2x slower)')
     print('  rss        peak RSS for new build')
-    print('  rss%       percent change in peak RSS vs base')
+    print('  r-rss      ratio of new/base peak RSS')
     print('  trash      max uncollected cyclic-garbage for new build')
-    print('  trash%     percent change in max trash vs base')
+    print('  r-trash    ratio of new/base max trash')
     print('  pause      max GC pause (ms) for new build')
-    print('  pause%     percent change in max GC pause vs base')
-    print('  peaked     yes if new build RSS and trash peaked before final 25% of run')
+    print('  r-pause    ratio of new/base max GC pause')
+    print('  stable     yes if new build trash count was stable (non-rising)')

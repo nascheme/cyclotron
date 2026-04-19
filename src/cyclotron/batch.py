@@ -9,19 +9,21 @@ import sys
 import time
 from pathlib import Path
 
-# Called as a standalone script by test interpreters that may not have
-# cyclotron installed.
-_CYCLES_SCRIPT = Path(__file__).parent / 'cycles.py'
+_SRC = Path(__file__).parent.parent
 
+WORKLOADS_DEFAULT = ['chain']
 CYCLE_SIZES_DEFAULT = [10, 100, 1_000]
 EXTRA_BYTES_DEFAULT = [0, 10_000, 100_000, 300_000]
 LIVE_OBJECTS_DEFAULT = [100, 10_000, 30_000]
+CYCLIC_FRACTIONS_DEFAULT = [1.0]
 
 if False:
     # fast run
-    CYCLE_SIZES_DEFAULT = [10]
-    EXTRA_BYTES_DEFAULT = [10_000]
-    LIVE_OBJECTS_DEFAULT = [100, 10_000]
+    WORKLOADS_DEFAULT = ['chain']
+    CYCLE_SIZES_DEFAULT = [100]
+    EXTRA_BYTES_DEFAULT = [100_000]
+    LIVE_OBJECTS_DEFAULT = [100, 10_000, 30_000]
+    CYCLIC_FRACTIONS_DEFAULT = [1.0]
 
 
 def add_args(p):
@@ -42,12 +44,20 @@ def add_args(p):
         help='JSON output file for the preceding --exec',
     )
     p.add_argument(
+        '--workloads',
+        nargs='+',
+        choices=('chain', 'tree'),
+        default=WORKLOADS_DEFAULT,
+        metavar='WL',
+        help='workload modes to sweep (chain, tree)',
+    )
+    p.add_argument(
         '--cycle-sizes',
         type=int,
         nargs='+',
         default=CYCLE_SIZES_DEFAULT,
         metavar='N',
-        help='cycle-size values to sweep',
+        help='cycle-size values to sweep (records-per-tree in tree mode)',
     )
     p.add_argument(
         '--extra-bytes',
@@ -65,33 +75,81 @@ def add_args(p):
         metavar='N',
         help='live-objects values to sweep',
     )
-    p.add_argument('--total-objects', type=int, default=10_000_000)
+    p.add_argument(
+        '--cyclic-fractions',
+        type=float,
+        nargs='+',
+        default=CYCLIC_FRACTIONS_DEFAULT,
+        metavar='F',
+        help='cyclic-fraction values to sweep (tree mode only)',
+    )
+    p.add_argument('--total-objects', type=int, default=1_000_000)
     p.add_argument('--report-interval', type=float, default=0.5)
+    p.add_argument(
+        '--sample-interval',
+        type=float,
+        default=0.5,
+        help='seconds between trash-count samples for stability check',
+    )
+    p.add_argument(
+        '--min-runtime',
+        type=float,
+        default=10.0,
+        help='minimum wall-clock seconds before a run may exit (passed'
+        ' through to cyclotron.cycles)',
+    )
+    p.add_argument(
+        '--max-runtime',
+        type=float,
+        default=60.0,
+        help='hard wall-clock cap per run (passed through to cyclotron.cycles)',
+    )
     p.add_argument(
         '--timeout',
         type=float,
-        default=900.0,
+        default=300.0,
         help='per-run timeout in seconds',
     )
     p.add_argument('--dry-run', action='store_true')
 
 
-def run_one(args, python_cmd, cycle_size, extra_bytes, live_objects):
+def run_one(
+    args,
+    python_cmd,
+    workload,
+    cycle_size,
+    extra_bytes,
+    live_objects,
+    cyclic_fraction,
+):
     cmd = shlex.split(python_cmd) + [
-        str(_CYCLES_SCRIPT),
+        '-m',
+        'cyclotron.cycles',
+        '--workload',
+        workload,
         '--cycle-size',
         str(cycle_size),
         '--extra-bytes',
         str(extra_bytes),
         '--live-objects',
         str(live_objects),
+        '--cyclic-fraction',
+        str(cyclic_fraction),
         '--total-objects',
         str(args.total_objects),
         '--report-interval',
         str(args.report_interval),
+        '--sample-interval',
+        str(args.sample_interval),
+        '--min-runtime',
+        str(args.min_runtime),
+        '--max-runtime',
+        str(args.max_runtime),
     ]
     if args.dry_run:
         return {'cmd': cmd, 'skipped': True}
+
+    env = {'PYTHONPATH': _SRC}
 
     t0 = time.perf_counter()
     try:
@@ -100,6 +158,7 @@ def run_one(args, python_cmd, cycle_size, extra_bytes, live_objects):
             capture_output=True,
             text=True,
             timeout=args.timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired as e:
         return {
@@ -109,6 +168,9 @@ def run_one(args, python_cmd, cycle_size, extra_bytes, live_objects):
             'stderr': e.stderr or '',
             'wall_time': time.perf_counter() - t0,
         }
+    if proc.returncode:
+        print(f'cmd {cmd!r} failed')
+        print(proc.stderr, file=sys.stderr)
     wall = time.perf_counter() - t0
 
     samples = []
@@ -136,9 +198,9 @@ def run_one(args, python_cmd, cycle_size, extra_bytes, live_objects):
             k, _, v = line.partition(':')
             summary[k.strip()] = v.strip()
 
-    peaked_s = summary.get('GC peaked')
-    peaked: bool | None = (
-        True if peaked_s == 'yes' else False if peaked_s == 'no' else None
+    stable_s = summary.get('GC stable')
+    stable: bool | None = (
+        True if stable_s == 'yes' else False if stable_s == 'no' else None
     )
 
     return {
@@ -147,7 +209,7 @@ def run_one(args, python_cmd, cycle_size, extra_bytes, live_objects):
         'wall_time': wall,
         'samples': samples,
         'summary': summary,
-        'peaked': peaked,
+        'stable': stable,
         'stderr_tail': proc.stderr[-2000:] if proc.returncode else '',
     }
 
@@ -175,9 +237,11 @@ def main(args=None):
 
     grid = list(
         itertools.product(
+            args.workloads,
             args.cycle_sizes,
             args.extra_bytes,
             args.live_objects,
+            args.cyclic_fractions,
         )
     )
     print(
@@ -195,33 +259,42 @@ def main(args=None):
                 'python': python_cmd,
                 'total_objects': args.total_objects,
                 'report_interval': args.report_interval,
+                'workloads': args.workloads,
                 'cycle_sizes': args.cycle_sizes,
                 'extra_bytes': args.extra_bytes,
                 'live_objects': args.live_objects,
+                'cyclic_fractions': args.cyclic_fractions,
                 'started': time.strftime('%Y-%m-%dT%H:%M:%S'),
             },
             'runs': [],
         }
 
-        for cs, eb, lo in grid:
+        for wl, cs, eb, lo, cf in grid:
             print(
-                f'[run] python={python_cmd!r} cs={cs} eb={eb} lo={lo}',
+                f'[run] python={python_cmd!r} wl={wl} cs={cs} eb={eb} lo={lo} cf={cf}',
                 file=sys.stderr,
                 flush=True,
             )
-            r = run_one(args, python_cmd, cs, eb, lo)
-            peaked_val = r.get('peaked')
-            peaked_str = (
-                'yes' if peaked_val is True else 'no' if peaked_val is False else '?'
+            r = run_one(args, python_cmd, wl, cs, eb, lo, cf)
+            stable_val = r.get('stable')
+            stable_str = (
+                'yes' if stable_val is True else 'no' if stable_val is False else '?'
             )
-            print(f'[done] peaked={peaked_str}', file=sys.stderr, flush=True)
+            wall = r.get('wall_time', 0.0)
+            print(
+                f'[done] stable={stable_str} time={wall:.1f}s',
+                file=sys.stderr,
+                flush=True,
+            )
             results['runs'].append(
                 {
                     'params': {
                         'python': python_cmd,
+                        'workload': wl,
                         'cycle_size': cs,
                         'extra_bytes': eb,
                         'live_objects': lo,
+                        'cyclic_fraction': cf,
                     },
                     **r,
                 }

@@ -23,7 +23,7 @@ def main():
     report_p.add_argument('input', help='JSON result file')
     report_p.add_argument(
         '--sort',
-        default='cycle_size,extra_bytes,live_objects',
+        default='workload,cycle_size,extra_bytes,live_objects,cyclic_fraction',
         help='comma-separated keys to sort by',
     )
 
@@ -34,7 +34,7 @@ def main():
     compare_p.add_argument('new', help='new JSON result file')
     compare_p.add_argument(
         '--sort',
-        default='cycle_size,extra_bytes,live_objects',
+        default='workload,cycle_size,extra_bytes,live_objects,cyclic_fraction',
         help='comma-separated keys to sort by',
     )
 

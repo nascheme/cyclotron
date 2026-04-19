@@ -26,21 +26,31 @@ Equivalently, once installed: `cyclotron <command> [options]`.
 
 ### `run` — single benchmark run
 
-Creates reference cycles of configurable size and payload, emits a CSV stream
-of live/trash/rss/pause samples on stdout, and prints a summary to stderr.
+Creates reference cycles of configurable shape and payload, emits a CSV
+stream of live/trash/rss/pause samples on stdout, and prints a summary to
+stderr.
 
 ```
-python -m cyclotron run [--cycle-size N] [--extra-bytes N] \
-    [--live-objects N] [--total-objects N] [--report-interval SEC]
+python -m cyclotron run [--workload {chain,tree}] [--cycle-size N] \
+    [--extra-bytes N] [--live-objects N] [--total-objects N] \
+    [--cyclic-fraction F] [--report-interval SEC]
 ```
 
 Parameters:
 
-- `--cycle-size` — objects per cycle (ring length)
-- `--extra-bytes` — bytes payload attached to one node per cycle
-- `--live-objects` — approximate live object count before the holder is cleared
-- `--total-objects` — total objects created before exit
-- `--report-interval` — seconds between CSV sample lines
+- `--workload` — `chain` (chain of `Node` objects) or `tree`
+  (b-tree of `Record`s, default).
+- `--cycle-size` — chain: objects per cycle (chain length). tree: records
+  per tree.
+- `--extra-bytes` — chain: bytes payload attached to one node per cycle.
+  tree: upper bound for the per-record bytes payload.
+- `--live-objects` — approximate live object/record count before the
+  holder is cleared.
+- `--total-objects` — total objects/records created before exit.
+- `--cyclic-fraction` — fraction of new objects to make into cyclic
+  trash. 0.0 makes objects fully refcount-freeable; 1.0 makes all
+  objects have cycles and need GC to free.  Defaults to 1.0.
+- `--report-interval` — seconds between CSV sample lines.
 
 ### `batch` — sweep across a parameter grid
 
@@ -74,12 +84,23 @@ Both reporting commands accept `--sort KEY1,KEY2,...` to order the rows.
 
 ## Design notes
 
-The benchmark is intentionally artificial: it only creates ring-linked `Node`
-objects (with `__slots__`) with an optional `bytes` payload. GC pause times
-are captured via `gc.callbacks`. RSS is read from `/proc/self/status` and is
-Linux-only.
+The benchmark supports two workloads:
 
-A "peaked" flag in the summary indicates whether trash stabilized by the end
-of the run: across full collections, is the last-seen trash count bounded by
-its prior high-water mark? RSS is not used for this check because it is less
-reliable of an indicator of stability.
+- **`chain`** — chain-linked `Node` objects (with `__slots__`)
+  with an optional `bytes` payload.
+- **`tree`** — b-tree of `Record`s adapted from the
+  pyperformance `btree` benchmark. Each "allocation unit" is a full
+  `BTree` (with branching factor 16) containing `--cycle-size` records,
+  built in randomized key order with the bottom 20% of keys deleted and
+  re-inserted to fragment in-memory layout.
+
+GC pause times are captured via `gc.callbacks`. RSS is read from
+`/proc/self/status` and is Linux-only.
+
+A "stable" flag in the summary indicates whether the trash count has reached
+steady state by the end of the run. A background sampler thread snapshots
+`num_trash` at a fixed time interval (independent of any GC implementation
+detail); the tail of that series is then grouped into blocks and a robust
+Theil-Sen slope is fit on the per-block max and median. The run is flagged
+stable if neither slope is rising beyond the configured limits. RSS is not
+used for this check because it is less reliable of an indicator of stability.
