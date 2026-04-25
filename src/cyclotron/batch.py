@@ -289,6 +289,7 @@ def main(args=None):
                 file=sys.stderr,
                 flush=True,
             )
+            run_failed = r.get('returncode', 0) != 0 or 'error' in r
             results['runs'].append(
                 {
                     'params': {
@@ -302,9 +303,8 @@ def main(args=None):
                     **r,
                 }
             )
-            # Persist after every run so partial sweeps are recoverable.
-            with open(out_path, 'w') as f:
-                json.dump(results, f, indent=1)
+            if run_failed:
+                sys.exit(1)
 
         results['meta']['finished'] = time.strftime('%Y-%m-%dT%H:%M:%S')
         with open(out_path, 'w') as f:
