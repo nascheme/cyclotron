@@ -52,17 +52,16 @@ Parameters:
   objects have cycles and need GC to free.  Defaults to 1.0.
 - `--report-interval` — seconds between CSV sample lines.
 
-### `run-queue` — queue based benchmark
+### `run-queue` — queue-based benchmark
 
-This benchmark continously creates small reference cycles and adds them to a
-fixed length dequeue. Stats are printed to stdout on each iteration.
+This benchmark continuously creates small reference cycles and adds them to a
+fixed-length deque. Stats are printed to stdout on each iteration.
 
 ### `batch` — sweep across a parameter grid
 
 Runs `run` across the cartesian product of `cycle-size × extra-bytes ×
 live-objects` for one or more Python executables, writing a JSON result file
-per executable. Results are persisted after every run so interrupted sweeps are
-recoverable.
+per executable once all runs complete.
 
 ```
 python -m cyclotron batch \
@@ -99,8 +98,8 @@ The benchmark supports two workloads:
   built in randomized key order with the bottom 20% of keys deleted and
   re-inserted to fragment in-memory layout.
 
-GC pause times are captured via `gc.callbacks`. RSS is read from
-`/proc/self/status` and is Linux-only.
+GC pause times are captured via `gc.callbacks`. RSS is read using `psutil`, if
+available, otherwise from `/proc/self/status` (Linux-only).
 
 A "stable" flag in the summary indicates whether the trash count has reached
 steady state by the end of the run. A background sampler thread snapshots
@@ -108,4 +107,4 @@ steady state by the end of the run. A background sampler thread snapshots
 detail); the tail of that series is then grouped into blocks and a robust
 Theil-Sen slope is fit on the per-block max and median. The run is flagged
 stable if neither slope is rising beyond the configured limits. RSS is not
-used for this check because it is less reliable of an indicator of stability.
+used for this check because it is less reliable an indicator of stability.
