@@ -2,6 +2,7 @@ import argparse
 
 import cyclotron.batch as batch
 import cyclotron.cycles as cycles
+import cyclotron.queue_cycles as queue_cycles
 import cyclotron.report as _report
 
 
@@ -16,6 +17,9 @@ def main():
         'batch', help='sweep across parameter grid for multiple executables'
     )
     batch.add_args(batch_p)
+
+    queue_p = sub.add_parser('run-queue', help='GC stress test (queue of Node objects)')
+    queue_cycles.add_args(queue_p)
 
     report_p = sub.add_parser(
         'report', help='show absolute numbers for one result file'
@@ -43,6 +47,8 @@ def main():
         cycles.main(args)
     elif args.cmd == 'batch':
         batch.main(args)
+    elif args.cmd == 'run-queue':
+        queue_cycles.main(args)
     elif args.cmd == 'report':
         _report.report(args)
     elif args.cmd == 'compare':

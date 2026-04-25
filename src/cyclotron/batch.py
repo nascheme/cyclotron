@@ -3,6 +3,7 @@ executables."""
 
 import itertools
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -17,12 +18,14 @@ EXTRA_BYTES_DEFAULT = [0, 10_000, 100_000, 300_000]
 LIVE_OBJECTS_DEFAULT = [100, 10_000, 30_000]
 CYCLIC_FRACTIONS_DEFAULT = [1.0]
 
-if False:
+_FAST = os.environ.get('CYCLOTRON_FAST') == '1'
+
+if _FAST:
     # fast run
     WORKLOADS_DEFAULT = ['chain']
     CYCLE_SIZES_DEFAULT = [100]
     EXTRA_BYTES_DEFAULT = [100_000]
-    LIVE_OBJECTS_DEFAULT = [100, 10_000, 30_000]
+    LIVE_OBJECTS_DEFAULT = [10_000]
     CYCLIC_FRACTIONS_DEFAULT = [1.0]
 
 

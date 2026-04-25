@@ -9,7 +9,9 @@ authors = [
 requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = []
+dependencies = [
+    "psutil",
+]
 
 [dependency-groups]
 dev = [

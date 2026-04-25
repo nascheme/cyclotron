@@ -52,6 +52,11 @@ Parameters:
   objects have cycles and need GC to free.  Defaults to 1.0.
 - `--report-interval` — seconds between CSV sample lines.
 
+### `run-queue` — queue based benchmark
+
+This benchmark continously creates small reference cycles and adds them to a
+fixed length dequeue. Stats are printed to stdout on each iteration.
+
 ### `batch` — sweep across a parameter grid
 
 Runs `run` across the cartesian product of `cycle-size × extra-bytes ×

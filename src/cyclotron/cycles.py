@@ -6,7 +6,7 @@ import threading
 import time
 from statistics import median
 
-from cyclotron import btree
+from cyclotron import btree, util
 
 
 def theil_sen_fit(xs, ys):
@@ -76,19 +76,8 @@ def gc_stability_check(
     }
 
 
-def get_memory_usage():
-    result = {'peak': 0, 'rss': 0}
-    with open('/proc/self/status') as status:
-        for line in status:
-            parts = line.split()
-            key = parts[0][2:-1].lower()
-            if key in result:
-                result[key] = int(parts[1])
-    return result
-
-
 def get_rss_kb():
-    return get_memory_usage().get('rss', 0)
+    return util.get_memory_usage()
 
 
 class Node:
@@ -128,6 +117,7 @@ def make_chain(cycle_size, extra_bytes, should_loop):
 
 _GC_PAUSE_START: float | None = None
 _GC_PAUSES: list[float] = []
+_INTERVAL_PAUSE_TOTAL: float = 0.0
 _INTERVAL_MAX_PAUSE: float = 0.0
 
 # Stability detection: a background sampler thread snapshots Stats.num_trash
@@ -143,9 +133,9 @@ _SAMPLER_STOP = threading.Event()
 
 
 def gc_callback(phase, info):
-    global _GC_PAUSE_START, _INTERVAL_MAX_PAUSE
+    global _GC_PAUSE_START, _INTERVAL_PAUSE_TOTAL, _INTERVAL_MAX_PAUSE
     if phase == 'start':
-        _gc_pause_start = time.perf_counter()
+        _GC_PAUSE_START = time.perf_counter()
         gen = info.get('generation')
         if isinstance(gen, int):
             _GC_COUNTS[gen] = _GC_COUNTS.get(gen, 0) + 1
@@ -153,9 +143,10 @@ def gc_callback(phase, info):
         if _GC_PAUSE_START is not None:
             dur = time.perf_counter() - _GC_PAUSE_START
             _GC_PAUSES.append(dur)
+            _INTERVAL_PAUSE_TOTAL += dur
             if dur > _INTERVAL_MAX_PAUSE:
-                _interval_max_pause = dur
-            _gc_pause_start = None
+                _INTERVAL_MAX_PAUSE = dur
+            _GC_PAUSE_START = None
 
 
 def _trash_sampler(interval):
@@ -309,18 +300,20 @@ def main(args=None):
     start = time.perf_counter()
     next_report = start
 
-    print('time_ms,alive,trash,rss_kb,pause_ms')
+    print('time_ms,alive,trash,rss_kb,pause_ms,gc_time_ms')
 
     def report(now):
-        global _INTERVAL_MAX_PAUSE
+        global _INTERVAL_PAUSE_TOTAL, _INTERVAL_MAX_PAUSE
         rss = get_rss_kb()
         if rss > Stats.peak_rss:
             Stats.peak_rss = rss
         elapsed_ms = (now - start) * 1000.0
+        gc_time_ms = _INTERVAL_PAUSE_TOTAL * 1000.0
         pause_ms = _INTERVAL_MAX_PAUSE * 1000.0
-        _interval_max_pause = 0.0
+        _INTERVAL_PAUSE_TOTAL = 0.0
+        _INTERVAL_MAX_PAUSE = 0.0
         print(
-            f'{elapsed_ms:.1f},{Stats.num_alive},{Stats.num_trash},{rss},{pause_ms:.3f}'
+            f'{elapsed_ms:.1f},{Stats.num_alive},{Stats.num_trash},{rss},{pause_ms:.3f},{gc_time_ms:.3f}'
         )
 
     def _series_stable(samples, **kw):
