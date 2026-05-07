@@ -152,7 +152,7 @@ def run_one(
     if args.dry_run:
         return {'cmd': cmd, 'skipped': True}
 
-    env = {'PYTHONPATH': _SRC}
+    env = {'PYTHONPATH': str(_SRC)}
 
     t0 = time.perf_counter()
     try:
