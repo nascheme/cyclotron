@@ -247,12 +247,14 @@ def main(args=None):
             args.cyclic_fractions,
         )
     )
+    runs_count = len(args.execs) * len(grid)
     print(
         f'{len(args.execs)} executable(s) × {len(grid)} grid points = '
-        f'{len(args.execs) * len(grid)} total runs',
+        f'{runs_count} total runs',
         file=sys.stderr,
     )
 
+    run_idx = 0
     for python_cmd, out_file in zip(args.execs, args.outputs):
         out_path = Path(out_file)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,8 +275,12 @@ def main(args=None):
         }
 
         for wl, cs, eb, lo, cf in grid:
+            run_idx += 1
+            run_idx_str = str(run_idx).rjust(len(str(runs_count)))
+            run_str = f'[{run_idx_str}/{runs_count}] '
+            padding = ''.rjust(len(run_str))
             print(
-                f'[run] python={python_cmd!r} wl={wl} cs={cs} eb={eb} lo={lo} cf={cf}',
+                f'{run_str}[run] python={python_cmd!r} wl={wl} cs={cs} eb={eb} lo={lo} cf={cf}',
                 file=sys.stderr,
                 flush=True,
             )
@@ -285,7 +291,7 @@ def main(args=None):
             )
             wall = r.get('wall_time', 0.0)
             print(
-                f'[done] stable={stable_str} time={wall:.1f}s',
+                f'{padding}[done] stable={stable_str} time={wall:.1f}s',
                 file=sys.stderr,
                 flush=True,
             )
