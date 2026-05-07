@@ -11,7 +11,7 @@ def _get_psutil_rss():
     global _PROCESS
     if _PROCESS is None:
         _PROCESS = psutil.Process()
-    return _PROCESS.memory_info().rss
+    return int(_PROCESS.memory_info().rss / 1024)
 
 
 def _get_proc_rss():
